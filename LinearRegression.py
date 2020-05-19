@@ -3,9 +3,6 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 from sklearn import linear_model
-from sklearn.preprocessing import StandardScaler
-from sklearn.datasets import fetch_california_housing
-from sklearn.model_selection import train_test_split
 
 
 class LinearRegression(object):
@@ -44,25 +41,21 @@ class LinearRegression(object):
 
     def L2_Loss(self, y_pred, y_true):
         '''
-        Compute L2_loss, also Mean Square Loss
+        Compute L2_Loss, also MeanSquareLoss
         '''
         n = len(y_true)
         y_true = tf.reshape(y_true, (-1, 1))
         y_pred = tf.reshape(y_pred, (-1, 1))
 
-        return tf.matmul(tf.transpose(y_pred - y_true), y_pred - y_true) / 2.0 / n
+        return tf.matmul(tf.transpose(y_pred - y_true), y_pred - y_true)  / n / 2
         # 下面这行代码会导致收敛速度和上面的差别很大, 原因未知
         # return tf.reduce_mean(tf.math.square(y_pred - y_true)) / 2
 
-    def average_error(self, y_pred, y_true):
+    def R2_score(self, y_pred, y_true):
         '''
         Compute average error between y_pred and label
         '''
-        error = 0
-        for a, b in zip(y_pred, y_true):
-            error += np.abs((a-b) /b)
-
-        return error / len(y_true)
+        return 1 - 2*self.L2_Loss(y_pred,y_true) / np.var(y_true)
 
     def BGD(self, X, y, lr):
         '''
@@ -109,7 +102,7 @@ class LinearRegression(object):
 
         pass
 
-    def fit(self, features, labels, epochs, learning_rate, mini_batch):
+    def fit(self, features, labels, epochs=20, learning_rate=0.001, mini_batch=20):
         '''
         Training the LinearRegression model
         - Args:
@@ -122,23 +115,24 @@ class LinearRegression(object):
         self.W = tf.Variable(tf.random.normal([feature_dim, 1], stddev=0.01))
         self.b = tf.Variable(tf.zeros(1,))
 
-        error_list = []
+        score_list = []
         loss_list = []
 
         for i in range(epochs):
             for X, y in self.dataloader(features, labels, mini_batch):
-                # 这里可以换成SGD
-                self.BGD(X, y, learning_rate)
+                # 默认选用了SGD
+                self.SGD(X, y, learning_rate)
+                #self.BGD(X, y, learning_rate)
 
             # 计算本次迭代的 总损失 以及 预测值和真实值的平均误差
             # 这里的平均误差可以作为预测准确率的一种考量
             loss = self.L2_Loss(self.linear_reg(features), labels)
             loss_list.append(loss)
-            error = self.average_error(self.linear_reg(features), labels)
-            error_list.append(error)
-            print('epoch %d: \nloss: %f, error: %f%%' % (i+1, loss, 100*error))
+            score = self.R2_score(self.linear_reg(features), labels)
+            score_list.append(score)
+            print('epoch %d: \nloss: %f, score: %f' % (i+1, loss, score))
             
-        return loss_list, error_list
+        return loss_list, score_list
 
     
     def evaluate(self, features, labels):
@@ -147,10 +141,10 @@ class LinearRegression(object):
         '''
         y_pred = self.linear_reg(features)
         loss = self.L2_Loss(y_pred,labels)
-        error = self.average_error(y_pred,labels)
+        score = self.R2_score(y_pred,labels)
 
-        print('evaluate: \nloss: %f, error: %f%%' % (loss, 100*error))
-        return loss, error
+        print('evaluate: \nloss: %f, score: %f' % (loss, score))
+        return loss, score
         
 
 if __name__ == "__main__":
@@ -161,24 +155,27 @@ if __name__ == "__main__":
         print("ERROR! Please upgrade your TensorFlow to 2.x verison!")
         exit()
 
-    housing = fetch_california_housing()
-    x_train, x_test, y_train, y_test = train_test_split(housing.data, housing.target, test_size=0.2)
-    #转换数据类型为 float32, tf.Tensor仅支持该数据类型
-    x_train, y_train = x_train.astype('float32'), y_train.astype('float32')
-    x_test, y_test = x_test.astype('float32'), y_test.astype('float32')
+    # 生成线性回归数据集 y = wx + b
+    w_real = [2.899, -3.475, 7.6621]
+    b_real = 4.272
+    # 产生特征, 符合正态分布, 标准差为1，共10000个, 维度为3
+    features = tf.random.normal((10000, 3), stddev=1)
+    labels = features[:,0]*w_real[0] + features[:,1]*w_real[1] + features[:,2]*w_real[2] + b_real 
+    # 给 labels 加上噪声数据
+    labels += tf.random.normal(labels.shape, stddev=0.01)
 
-    # 通过梯度下降法求解的模型需要进行特征缩放
-    x_train = StandardScaler().fit_transform(x_train)
-    x_test = StandardScaler().fit_transform(x_test)
+    # 分割测试集和训练集
+    x_train, y_train = features[:-1000],labels[:-1000]
+    x_test, y_test = features[-1000:], labels[-1000:]
 
     # Hyperparameters
     epochs = 20
-    learning_rate = 0.003
-    mini_batch = 32
+    learning_rate = 0.001
+    mini_batch = 20
 
     lrg = LinearRegression()
-    train_loss,train_error = lrg.fit(x_train, y_train, epochs, learning_rate, mini_batch)
-    lrg.evaluate(x_test,y_test)
+    train_loss,train_score = lrg.fit(x_train, y_train, epochs, learning_rate, mini_batch)
+    lrg.evaluate(x_test, y_test)
 
     # 绘制训练过程中loss曲线
     ax1 = plt.subplot(2,1,1)
@@ -187,9 +184,9 @@ if __name__ == "__main__":
     plt.ylabel('loss')
     # 绘制训练过程中error曲线
     ax2 = plt.subplot(2,1,2)
-    ax2.plot([i+1 for i in range(epochs)],[j*100 for j in train_error])
+    ax2.plot([i+1 for i in range(epochs)],np.reshape(train_score,(-1,)))
     plt.xlabel('epochs')
-    plt.ylabel('error %')
+    plt.ylabel('score')
     
     plt.show()
 
